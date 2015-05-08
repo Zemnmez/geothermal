@@ -1,0 +1,5 @@
+package geothermal
+
+import (
+	"testing"
+)
