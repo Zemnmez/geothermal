@@ -31,7 +31,7 @@ type Login struct {
 	SteamGuardCode string
 	ComputerName   string
 
-	c http.Client
+	c *Client
 }
 
 func (l Login) CaptchaURL() string {
@@ -93,6 +93,11 @@ func (l *Login) Attempt() (err error) {
 	l.Message = rsp.Message
 
 	//	println(fmt.Sprintf("rsp: %+v login: %+v", rsp, l))
+
+	//set SessionID
+	if l.c.SessionID, err = l.c.sessionID(); err != nil {
+		return
+	}
 
 	return
 }
@@ -189,7 +194,7 @@ func (c *Client) Login(username, password string) (l Login, err error) {
 
 	l.username = username
 
-	l.c = c.Client
+	l.c = c
 
 	err = l.Attempt()
 	return

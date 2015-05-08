@@ -3,6 +3,7 @@ package geothermal
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -18,6 +19,7 @@ var (
 //Remember to set Client.Timeout!
 type Client struct {
 	http.Client
+	SessionID string
 }
 
 func (c Client) MarshalJSON() ([]byte, error) {
@@ -41,7 +43,9 @@ func (c *Client) UnmarshalJSON(b []byte) (err error) {
 	return
 }
 
-func (c Client) SessionID() (sid string, err error) {
+var NoSID = errors.New("could not get sessionid, ensure logged in")
+
+func (c Client) sessionID() (sid string, err error) {
 	for i := 0; i < 2; i++ {
 		for _, v := range c.Client.Jar.Cookies(steamCommunityURL) {
 			if v.Name == "sessionid" {
@@ -51,6 +55,21 @@ func (c Client) SessionID() (sid string, err error) {
 
 		//Attempt to get cookie set
 		c.Get(SteamCommunityURL)
+	}
+
+	err = NoSID
+
+	return
+}
+
+func (c Client) Logout() (err error) {
+	_, err = c.PostForm(
+		SteamCommunityURL+"/login/logout",
+		url.Values{"sessionid": {c.SessionID}},
+	)
+
+	if err != nil {
+		return
 	}
 
 	return
