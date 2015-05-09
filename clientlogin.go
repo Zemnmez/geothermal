@@ -7,29 +7,49 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"golang.org/x/crypto/ssh/terminal"
 	"math/big"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 )
 
+//Represents a complete or incomplete Steam login sesssion. If Complete is false, additional
+//input may be required. If a CAPTCHA needs completing, Captcha will be a non-empty string.
+//If a SteamGuard code is required, SteamGuard will be true.
+//
+//Once the appropriate fields are filled in, run Login.Attempt() again. See the code of CompleteInteractive
+//for an example login completion loop.
 type Login struct {
+	//Login has completed, no extra input required.
+	Complete bool
+
 	encPw        []byte
 	username     string
 	rsatimestamp string
 
-	//hint
+	//Email which SteamGuard code was emailed to, if SteamGuard is true
 	EmailDomain string
-	Message     string
 
-	Complete bool
+	//Server sent messages "please complete the captcha below"
+	Message string
 
-	Captcha         string
+	//CAPTCHA ID for captcha that needs completing
+	//see CaptchaURL() for the image url.
+	//
+	//Solution should be placed in CaptchaSolution before attempting
+	//again.
+	Captcha string
+	//Completed solution for the CAPTCHA
 	CaptchaSolution string
 
-	SteamGuard     bool
+	//A SteamGuard code is required for the login process to continue
+	SteamGuard bool
+	//Fill with SteamGuard code to continue login process
 	SteamGuardCode string
-	ComputerName   string
+	//Set to 'human readable name', SteamGuard will record this computer / login by this name.
+	ComputerName string
 
 	c *Client
 }
@@ -153,20 +173,8 @@ func (c *Client) getRSAKey(username string) (exp int, mod *big.Int, timestamp st
 	return
 }
 
-//Makes a login attempt
-//
-//	l, err := c.Login("dave", "letmein")
-//	if err != nil {
-//		panic(err)
-//	}
-//
-//	if l.Captcha {
-//		l.CompleteCaptcha("WORDS")
-//	}
-//
-//	if l.SteamGuard {
-//		l.SteamGuard("CODE")
-//	}
+//Attempts a login into a steam account on this Client. Login returns a
+//Login value which may represent a complete or incomplete login.
 func (c *Client) Login(username, password string) (l Login, err error) {
 	if c.Client.Jar == nil {
 		c.Client.Jar, err = cookiejar.New(nil)
@@ -198,5 +206,114 @@ func (c *Client) Login(username, password string) (l Login, err error) {
 
 	err = l.Attempt()
 	return
+}
 
+func input(val interface{}, prompt ...interface{}) (err error) {
+	if _, err = fmt.Print(prompt...); err != nil {
+		return
+	}
+
+	if _, err = fmt.Scanln(val); err != nil {
+		return
+	}
+
+	return
+}
+
+func inputf(format string, val interface{}, prompt ...interface{}) (err error) {
+	if _, err = fmt.Printf(format, prompt...); err != nil {
+		return
+	}
+
+	if _, err = fmt.Scanln(val); err != nil {
+		return
+	}
+
+	return
+}
+
+//Interactively prompts the user "Please complete CAPTCHA" with input from stdin
+// to complete the login CAPTCHA.
+func (l *Login) PromptCAPTCHA() (err error) {
+	return input(&l.CaptchaSolution, "CAPTCHA: ", l.CaptchaURL())
+}
+
+//Interactively prompts the user "Please enter SteamGuard code: " with input from stdin
+// to pass SteamGuard.
+func (l *Login) PromptSteamGuard() (err error) {
+	return input(&l.SteamGuardCode, "SteamGuard code: ")
+}
+
+var ErrLoginFail = errors.New("failure with no CAPTCHA or SteamGuard to complete, verify username & password")
+
+//Interactively completes the login process, prompting the user to enter SteamGuard and
+//CAPTCHA codes where needed.
+func (l *Login) CompleteInteractive() (err error) {
+	for !l.Complete {
+		if l.Message != "" {
+			if _, err = fmt.Println(l.Message); err != nil {
+				return
+			}
+		}
+
+		thingsDone := 0
+		if l.Captcha != "" {
+			thingsDone++
+
+			if err = l.PromptCAPTCHA(); err != nil {
+				return
+			}
+		}
+
+		if l.SteamGuard {
+			thingsDone++
+
+			if err = l.PromptSteamGuard(); err != nil {
+				return
+			}
+		}
+
+		if thingsDone < 1 {
+			return ErrLoginFail
+		}
+
+		if err = l.Attempt(); err != nil {
+			return
+		}
+	}
+
+	return
+}
+
+//Interactively completes the Steam login process, prompting the user for missing credentials through
+//stdin and stdout as needed.
+func (c *Client) InteractiveLogin() (err error) {
+	var username string
+	if err = input(&username, "Username: "); err != nil {
+		return
+	}
+
+	if _, err = fmt.Print("Password: "); err != nil {
+		return
+	}
+
+	var password []byte
+	if password, err = terminal.ReadPassword(0); err != nil {
+		return
+	}
+
+	if _, err = fmt.Println(""); err != nil {
+		return
+	}
+
+	l, err := c.Login(username, string(password))
+	if err != nil {
+		return
+	}
+
+	if err = l.CompleteInteractive(); err != nil {
+		return
+	}
+
+	return
 }

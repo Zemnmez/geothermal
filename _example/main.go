@@ -1,10 +1,10 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
+	"encoding/base64"
 	"fmt"
 	"github.com/zemnmez/geothermal"
+	"github.com/zemnmez/geothermal/chat"
 	"os"
 )
 
@@ -19,63 +19,34 @@ var sessionfile string
 func do() (err error) {
 	var c geothermal.Client
 
-	var l geothermal.Login
-	var username, password string
-	fmt.Println("Username:")
-	fmt.Scanln(&username)
+	if err = c.InteractiveLogin(); err != nil {
+		return
+	}
 
-	fmt.Println("Password:")
-	fmt.Scanln(&password)
-
-	l, err = c.Login(username, password)
+	ch, err := chat.New(&c.Client)
 	if err != nil {
 		return
 	}
 
-	for !l.Complete {
-		if l.Message != "" {
-			fmt.Println(l.Message)
-		}
-
-		thingsToDo := false
-		if l.Captcha != "" {
-			thingsToDo = true
-
-			fmt.Println("Complete CAPTCHA", l.CaptchaURL())
-			fmt.Scanln(&l.CaptchaSolution)
-		}
-
-		if l.SteamGuard {
-			thingsToDo = true
-
-			fmt.Println("SteamGuard code:")
-			fmt.Scanln(&l.SteamGuardCode)
-		}
-
-		if !thingsToDo {
-			// un/pw fail
-			return errors.New("Failure with no CAPTCHA or SteamGuard to complete. " +
-				"You probably got your username or password wrong.")
-		}
-
-		if err = l.Attempt(); err != nil {
+	for {
+		var m []chat.Message
+		m, err = ch.Poll()
+		if err != nil {
 			return
 		}
+
+		for _, s := range m {
+			switch v := s.(type) {
+			case chat.SaytextMessage:
+				if v.Self {
+					continue
+				}
+				if err = ch.Say(uint64(geothermal.UserSteamID(v.AccountIDFrom)), base64.StdEncoding.EncodeToString([]byte(v.Text))); err != nil {
+					return
+				}
+			}
+		}
 	}
-
-	//looks like it worked :)
-	fmt.Println("Log in successful, saving session")
-
-	f, err := os.Create("session.json")
-	if err != nil {
-		return
-	}
-
-	if err = json.NewEncoder(f).Encode(c); err != nil {
-		return
-	}
-
-	f.Close()
 
 	return
 }
